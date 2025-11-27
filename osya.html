@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Liquid Motion Archive</title>
+    <style>
+        /* UIデザインの整備 */
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #f2f2f0; 
+            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", sans-serif;
+        }
+        canvas { display: block; }
+        
+        #overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            transition: opacity 1s;
+        }
+        
+        #loading {
+            font-size: 1.2rem;
+            color: #888;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+        }
+
+        #ui-layer {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            color: #444;
+            mix-blend-mode: multiply; /* 紙に馴染ませる */
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 600;
+            letter-spacing: 0.15em;
+            border-bottom: 1px solid #999;
+            display: inline-block;
+            padding-bottom: 5px;
+        }
+
+        p {
+            margin-top: 8px;
+            font-size: 0.75rem;
+            font-weight: 300;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="overlay">
+        <div id="loading">Initialize Camera...</div>
+    </div>
+
+    <div id="ui-layer">
+        <h1>MOTION ARCHIVE</h1>
+        <p>Movement becomes ink. / 動きが色として堆積する</p>
+    </div>
+
+    <!-- Three.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- 
+      Shader 1: 動き検出 (Motion Detection)
+      前フレームとの差分を取り、動きのマスクを作成する
+    -->
+    <script id="motionVertex" type="x-shader/x-vertex">
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    </script>
+    <script id="motionFragment" type="x-shader/x-fragment">
+        uniform sampler2D tCurrent;
+        uniform sampler2D tPrevious;
+        uniform float uSensitivity;
+        varying vec2 vUv;
+
+        void main() {
+            vec3 curr = texture2D(tCurrent, vUv).rgb;
+            vec3 prev = texture2D(tPrevious, vUv).rgb;
+            
+            // 輝度差だけでなく、色の距離で判定して精度を上げる
+            float diff = distance(curr, prev);
+            
+            // ノイズ除去（閾値を設けて微細なノイズを無視）
+            float motion = smoothstep(0.08, 0.25, diff);
+            
+            gl_FragColor = vec4(vec3(motion * uSensitivity), 1.0);
+        }
+    </script>
+
+    <!-- 
+      Shader 2: シミュレーション (Ink Simulation)
+      インクの拡散、定着、色の合成を行うコア部分
+    -->
+    <script id="simFragment" type="x-shader/x-fragment">
+        uniform sampler2D tMotion;    // 動きマスク
+        uniform sampler2D tFeedback;  // 1フレーム前の描画結果
+        uniform sampler2D tCamera;    // 現在のカメラ映像
+        uniform float uTime;
+        varying vec2 vUv;
+
+        // ノイズ関数（流体のようなゆらぎを作る）
+        vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
+
+        float snoise(vec2 v) {
+            const vec4 C = vec4(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
+            vec2 i  = floor(v + dot(v, C.yy) );
+            vec2 x0 = v - i + dot(i, C.xx);
+            vec2 i1;
+            i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+            vec4 x12 = x0.xyxy + C.xxzz;
+            x12.xy -= i1;
+            i = mod289(i);
+            vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 )) + i.x + vec3(0.0, i1.x, 1.0 ));
+            vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
+            m = m*m ;
+            m = m*m ;
+            vec3 x = 2.0 * fract(p * C.www) - 1.0;
+            vec3 h = abs(x) - 0.5;
+            vec3 ox = floor(x + 0.5);
+            vec3 a0 = x - ox;
+            m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
+            vec3 g;
+            g.x  = a0.x  * x0.x  + h.x  * x0.y;
+            g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+            return 130.0 * dot(m, g);
+        }
+
+        void main() {
+            float motionVal = texture2D(tMotion, vUv).r;
+            
+            // --- 座標のゆらぎ（インクの拡散） ---
+            // ノイズを使ってUV座標を微妙にずらし、インクが滲む動きを作る
+            float noiseScale = 6.0;
+            float flowSpeed = 0.2;
+            vec2 flowDir = vec2(
+                snoise(vUv * noiseScale + uTime * flowSpeed),
+                snoise(vUv * noiseScale + uTime * flowSpeed + 100.0)
+            );
+            
+            // 拡散の強さ（値が小さいほど色がその場に留まる）
+            vec2 offset = flowDir * 0.003; 
+            
+            // 過去のフレームを取得（ずらした座標から）
+            vec4 prevColor = texture2D(tFeedback, vUv + offset);
+
+            // --- 新しい色の注入 ---
+            // カメラの色を取得し、少し強調する（水彩っぽく鮮やかに）
+            vec3 camColor = texture2D(tCamera, vUv).rgb;
+            
+            // 彩度を上げる簡易処理
+            vec3 luminance = vec3(dot(camColor, vec3(0.299, 0.587, 0.114)));
+            vec3 saturatedColor = mix(luminance, camColor, 1.6); // 1.6倍彩度強調
+            
+            // 動きがあった部分だけ新しい色を混ぜる
+            // mix(A, B, factor): AとBをfactorの割合で混ぜる
+            // motionValが高いほど新しい色が強く出る
+            vec3 finalColor = mix(prevColor.rgb, saturatedColor, motionVal * 0.4);
+
+            // --- 色の減衰（乾燥） ---
+            // 完全に色が消えないようにしつつ、無限に明るくなるのを防ぐ
+            // 1.0に近い値を掛けることで、古い色がほんの少しずつ薄くなる（または紙に馴染む）
+            finalColor *= 0.998; 
+
+            gl_FragColor = vec4(finalColor, 1.0);
+        }
+    </script>
+
+    <!-- 
+      Shader 3: コンポジット (Final Composition)
+      画用紙の質感を追加し、シミュレーション結果を美しく表示する
+    -->
+    <script id="compositeFragment" type="x-shader/x-fragment">
+        uniform sampler2D tInk;
+        uniform vec2 uResolution;
+        varying vec2 vUv;
+
+        // 乱数生成
+        float random(vec2 st) {
+            return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453);
+        }
+
+        void main() {
+            vec4 ink = texture2D(tInk, vUv);
+            
+            // --- 画用紙の生成 ---
+            // ベースの紙色（温かみのある白）
+            vec3 paperBase = vec3(0.96, 0.95, 0.93);
+            
+            // 紙の繊維ノイズ
+            float grain = random(vUv * 3.0);
+            float fineGrain = random(vUv * 200.0); // 細かいザラつき
+            
+            vec3 paper = paperBase - (grain * 0.02) - (fineGrain * 0.03);
+            
+            // --- インクの合成 ---
+            // インクの明るさを反転させて濃度とする（乗算合成的アプローチ）
+            // インク色が黒(0,0,0)に近いほど濃く塗るのではなく、
+            // 今回はインク色が明るい(鮮やか)なので、そのまま色として乗せる
+            
+            // インクの強さ（透明度）を色の明るさから算出
+            float inkAlpha = length(ink.rgb);
+            inkAlpha = smoothstep(0.0, 1.2, inkAlpha); // 調整
+            
+            // 紙の上にインクを乗せる（水彩風ブレンド）
+            // インクがある場所はインク色、ない場所は紙の色
+            vec3 final = mix(paper, ink.rgb, inkAlpha * 0.9);
+            
+            // ビネット効果（四隅を少し暗くして雰囲気出し）
+            float dist = distance(vUv, vec2(0.5));
+            final *= smoothstep(0.8, 0.3, dist * 0.6);
+
+            gl_FragColor = vec4(final, 1.0);
+        }
+    </script>
+
+    <script>
+        // --- 設定と初期化 ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio); // 高解像度対応
+        document.body.appendChild(renderer.domElement);
+
+        const clock = new THREE.Clock();
+
+        // 画面全体を覆う平面
+        const geometry = new THREE.PlaneGeometry(2, 2);
+
+        // --- ビデオ入力の準備 ---
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.muted = true;
+        video.loop = true;
+        video.setAttribute('playsinline', ''); 
+
+        let videoTexture, rtVideoPrev;
+        let isCameraReady = false;
+
+        // --- カメラ起動 ---
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: 1280, height: 720 } })
+                .then(stream => {
+                    video.srcObject = stream;
+                    video.play();
+                    
+                    videoTexture = new THREE.VideoTexture(video);
+                    videoTexture.minFilter = THREE.LinearFilter;
+                    videoTexture.magFilter = THREE.LinearFilter;
+                    
+                    // シェーダーにテクスチャを渡す
+                    inkMaterial.uniforms.tCamera.value = videoTexture;
+                    motionMaterial.uniforms.tCurrent.value = videoTexture;
+                    
+                    document.getElementById('loading').style.opacity = 0;
+                    isCameraReady = true;
+                })
+                .catch(err => {
+                    document.getElementById('loading').textContent = "Camera Blocked";
+                });
+        }
+
+        // --- レンダーターゲット（バッファ）の設定 ---
+        // 浮動小数点テクスチャを使うことで色の精度を落とさず滑らかにする
+        const rtParams = { 
+            minFilter: THREE.LinearFilter, 
+            magFilter: THREE.LinearFilter, 
+            format: THREE.RGBAFormat,
+            type: THREE.HalfFloatType // モバイル互換性のためHalfFloat推奨
+        };
+
+        // 1. 動き検出用
+        const rtMotion = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, rtParams);
+        
+        // 2. インクシミュレーション用（Ping-Pong）
+        // AとBを交互に入れ替えて「前のフレーム」を参照できるようにする
+        let rtSimA = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, rtParams);
+        let rtSimB = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, rtParams);
+
+        // 3. 過去のビデオフレーム保存用
+        rtVideoPrev = new THREE.WebGLRenderTarget(1024, 1024, rtParams);
+
+        // --- マテリアル（シェーダー）の設定 ---
+
+        // 1. 動き検出
+        const motionMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                tCurrent: { value: null },
+                tPrevious: { value: null },
+                uSensitivity: { value: 6.0 } // 感度調整
+            },
+            vertexShader: document.getElementById('motionVertex').textContent,
+            fragmentShader: document.getElementById('motionFragment').textContent
+        });
+
+        // 2. インクシミュレーション
+        const inkMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                tMotion: { value: null },
+                tFeedback: { value: null }, // 前回の絵
+                tCamera: { value: null },   // カメラ映像
+                uTime: { value: 0.0 }
+            },
+            vertexShader: document.getElementById('motionVertex').textContent,
+            fragmentShader: document.getElementById('simFragment').textContent
+        });
+
+        // 3. 最終描画（コンポジット）
+        const compositeMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                tInk: { value: null },
+                uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+            },
+            vertexShader: document.getElementById('motionVertex').textContent,
+            fragmentShader: document.getElementById('compositeFragment').textContent
+        });
+
+        // 4. コピー用（ビデオフレーム保存）
+        const copyMaterial = new THREE.MeshBasicMaterial({ map: null });
+
+        // メッシュ作成
+        const quad = new THREE.Mesh(geometry, motionMaterial);
+        scene.add(quad);
+
+
+        // --- アニメーションループ ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!isCameraReady || !videoTexture) return;
+
+            const time = clock.getElapsedTime();
+
+            // 1. 【動き検出】 現在のビデオ vs 1フレーム前のビデオ
+            quad.material = motionMaterial;
+            motionMaterial.uniforms.tPrevious.value = rtVideoPrev.texture; // 保存しておいた過去フレーム
+            // tCurrentはvideoTextureが自動更新されているのでそのまま参照される
+            renderer.setRenderTarget(rtMotion);
+            renderer.render(scene, camera);
+
+            // 2. 【インク拡散】 フィードバックループ
+            quad.material = inkMaterial;
+            inkMaterial.uniforms.tMotion.value = rtMotion.texture;
+            inkMaterial.uniforms.tFeedback.value = rtSimA.texture; // 前回のインク状態
+            inkMaterial.uniforms.uTime.value = time;
+            
+            renderer.setRenderTarget(rtSimB); // Bに書き込む
+            renderer.render(scene, camera);
+
+            // バッファの交換 (Ping-Pong)
+            let temp = rtSimA;
+            rtSimA = rtSimB;
+            rtSimB = temp;
+
+            // 3. 【画面への描画】 紙の質感と合成して表示
+            quad.material = compositeMaterial;
+            compositeMaterial.uniforms.tInk.value = rtSimA.texture;
+            renderer.setRenderTarget(null); // 画面に出力
+            renderer.render(scene, camera);
+
+            // 4. 【次フレームの準備】 現在のビデオ画像を保存
+            quad.material = copyMaterial;
+            copyMaterial.map = videoTexture;
+            renderer.setRenderTarget(rtVideoPrev);
+            renderer.render(scene, camera);
+        }
+
+        // ウィンドウサイズ変更対応
+        window.addEventListener('resize', () => {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            renderer.setSize(w, h);
+            
+            // レンダーターゲットのリサイズ
+            rtMotion.setSize(w, h);
+            rtSimA.setSize(w, h);
+            rtSimB.setSize(w, h);
+            compositeMaterial.uniforms.uResolution.value.set(w, h);
+        });
+
+        animate();
+
+    </script>
+</body>
+</html>

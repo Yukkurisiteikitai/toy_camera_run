@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Motion Brush Warehouse - WebGL</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f5f5f0; }
+        canvas { display: block; }
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #888;
+            font-family: sans-serif;
+            letter-spacing: 0.1em;
+            pointer-events: none;
+        }
+        #info {
+            position: absolute;
+            bottom: 20px; left: 20px;
+            color: #333;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 0.8rem;
+            opacity: 0.6;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">Requesting Camera Access...</div>
+    <div id="info">Move your body to paint.</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- 
+      Shader 1: 動き検出 (Motion Detection)
+      現在のフレームと1つ前のフレームの差分を取ります。
+    -->
+    <script id="motionVertex" type="x-shader/x-vertex">
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    </script>
+    <script id="motionFragment" type="x-shader/x-fragment">
+        uniform sampler2D tCurrent;
+        uniform sampler2D tPrevious;
+        uniform float uSensitivity;
+        varying vec2 vUv;
+
+        void main() {
+            vec4 curr = texture2D(tCurrent, vUv);
+            vec4 prev = texture2D(tPrevious, vUv);
+            
+            // 差分計算（RGBの距離）
+            float diff = distance(curr.rgb, prev.rgb);
+            
+            // ノイズ除去のための閾値処理
+            float motion = smoothstep(0.05, 0.2, diff) * uSensitivity;
+            
+            gl_FragColor = vec4(vec3(motion), 1.0);
+        }
+    </script>
+
+    <!-- 
+      Shader 2: フィードバック描画 (Ink Simulation)
+      動きがあった場所に色を置き、過去の描画結果と混ぜ合わせます（滲み処理）。
+    -->
+    <script id="inkVertex" type="x-shader/x-vertex">
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    </script>
+    <script id="inkFragment" type="x-shader/x-fragment">
+        uniform sampler2D tMotion;    // 動き検出の結果
+        uniform sampler2D tFeedback;  // 1フレーム前の描画結果
+        uniform float uTime;
+        varying vec2 vUv;
+
+        // 疑似乱数生成
+        float random(vec2 st) {
+            return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+        }
+
+        // ノイズ関数（インクの滲み用）
+        float noise(vec2 st) {
+            vec2 i = floor(st);
+            vec2 f = fract(st);
+            float a = random(i);
+            float b = random(i + vec2(1.0, 0.0));
+            float c = random(i + vec2(0.0, 1.0));
+            float d = random(i + vec2(1.0, 1.0));
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+        }
+
+        void main() {
+            // 動きの量を取得
+            float motion = texture2D(tMotion, vUv).r;
+
+            // インクが滲むように座標を少し歪ませて過去のフレームを取得
+            // これにより色がじわじわ広がる
+            vec2 offset = vec2(
+                noise(vUv * 10.0 + uTime * 0.5) - 0.5,
+                noise(vUv * 10.0 + uTime * 0.5 + 100.0) - 0.5
+            ) * 0.004; // 滲みの強さ
+
+            vec4 oldColor = texture2D(tFeedback, vUv + offset);
+
+            // 新しい色の生成（時間と座標で変化する虹色グラデーション）
+            // オシャレなパステル調にする
+            vec3 newColor = 0.5 + 0.5 * cos(uTime * 0.5 + vUv.xyx * 2.0 + vec3(0,2,4));
+            
+            // 色を合成
+            // motionがある場所は新しい色、ない場所は古い色を少し薄くして残す
+            vec3 finalColor = mix(oldColor.rgb * 0.995, newColor, motion * 0.8);
+
+            // 完全に白くならないように少し減衰（紙に馴染む感じ）
+            // 数値を下げると色が消えるのが早くなる
+            
+            gl_FragColor = vec4(finalColor, 1.0);
+        }
+    </script>
+
+    <!-- 
+      Shader 3: 最終出力 (Composition)
+      シミュレーション結果を画用紙の上に合成して表示。
+    -->
+    <script id="compositeFragment" type="x-shader/x-fragment">
+        uniform sampler2D tInk;
+        varying vec2 vUv;
+
+        void main() {
+            vec4 ink = texture2D(tInk, vUv);
+            
+            // 画用紙の色（クリーム色）
+            vec3 paper = vec3(0.96, 0.96, 0.94);
+            
+            // インクがある部分を紙に合成（乗算合成っぽい雰囲気で）
+            // インク（黒背景に色）を反転させて紙に乗せるロジック
+            
+            // シンプルに、インクの明るさ分だけ紙の色をインク色に置換
+            float inkStrength = length(ink.rgb) / 1.732; // 0.0 - 1.0 normalize
+            
+            vec3 final = mix(paper, ink.rgb, inkStrength * 1.2);
+            
+            // わずかな紙の質感を足す
+            float grain = (fract(sin(dot(vUv, vec2(12.9898,78.233)*2.0)) * 43758.5453) - 0.5) * 0.03;
+            
+            gl_FragColor = vec4(final + grain, 1.0);
+        }
+    </script>
+
+    <script>
+        // WebGL Setup
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        const renderer = new THREE.WebGLRenderer({ antialias: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Webcam Setup
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.muted = true;
+        video.loop = true;
+        // iOS/Safari対応
+        video.setAttribute('playsinline', ''); 
+
+        let videoTexture, lastFrameTexture;
+        let isCameraReady = false;
+
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
+                .then(stream => {
+                    video.srcObject = stream;
+                    video.play();
+                    
+                    videoTexture = new THREE.VideoTexture(video);
+                    videoTexture.minFilter = THREE.LinearFilter;
+                    
+                    // 前回のフレームを保存するためのテクスチャ
+                    // 初期状態ではビデオと同じ
+                    lastFrameTexture = new THREE.Texture(video); // Placeholder
+                    
+                    document.getElementById('loading').style.display = 'none';
+                    isCameraReady = true;
+                })
+                .catch(err => {
+                    console.error("Camera access denied:", err);
+                    document.getElementById('loading').textContent = "Camera access denied. Please allow camera.";
+                });
+        }
+
+        // Render Targets (Ping-Pong Buffers for Feedback Loop)
+        // これを使って「前のフレームの絵」を記憶し、次のフレームに渡す
+        const rtParams = { 
+            minFilter: THREE.LinearFilter, 
+            magFilter: THREE.LinearFilter, 
+            format: THREE.RGBAFormat,
+            type: THREE.FloatType // 滑らかな色のために浮動小数点テクスチャ推奨
+        };
+        let rtA = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, rtParams);
+        let rtB = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, rtParams);
+        
+        // Motion Detection Target (動きだけを白黒で描画するバッファ)
+        const rtMotion = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, rtParams);
+
+        // Plane Geometry fills the screen
+        const geometry = new THREE.PlaneGeometry(2, 2);
+
+        // --- Materials ---
+
+        // 1. Motion Detection Material
+        const motionMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                tCurrent: { value: null },
+                tPrevious: { value: null },
+                uSensitivity: { value: 5.0 } // 感度
+            },
+            vertexShader: document.getElementById('motionVertex').textContent,
+            fragmentShader: document.getElementById('motionFragment').textContent
+        });
+
+        // 2. Ink Simulation Material
+        const inkMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                tMotion: { value: null },
+                tFeedback: { value: null }, // 前回の結果
+                uTime: { value: 0.0 }
+            },
+            vertexShader: document.getElementById('inkVertex').textContent,
+            fragmentShader: document.getElementById('inkFragment').textContent
+        });
+
+        // 3. Final Composite Material
+        const compositeMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                tInk: { value: null }
+            },
+            vertexShader: document.getElementById('motionVertex').textContent,
+            fragmentShader: document.getElementById('compositeFragment').textContent
+        });
+
+        // Mesh setup
+        const quad = new THREE.Mesh(geometry, motionMaterial);
+        scene.add(quad);
+
+        // Previous video frame capture using a secondary canvas logic would be ideal,
+        // but for WebGL performance, we can just use the previous render loop's video state?
+        // Actually, capturing exact previous video frame in WebGL needs a copy.
+        // Let's simplify: 
+        // We will copy the current video frame to a texture 'tPrevious' at the END of the frame.
+        
+        const rtVideoPrev = new THREE.WebGLRenderTarget(512, 512); // Smaller for performance/blur
+        const copyMaterial = new THREE.MeshBasicMaterial({ map: null }); // Simple copy
+
+        
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!isCameraReady || !videoTexture) return;
+
+            const time = clock.getElapsedTime();
+
+            // ------------------------------------------------
+            // Step 1: Detect Motion
+            // ------------------------------------------------
+            // 現在のビデオと、保存しておいた1フレーム前のビデオを比較
+            quad.material = motionMaterial;
+            motionMaterial.uniforms.tCurrent.value = videoTexture;
+            motionMaterial.uniforms.tPrevious.value = rtVideoPrev.texture; // 前回のビデオフレーム
+            
+            renderer.setRenderTarget(rtMotion);
+            renderer.render(scene, camera);
+
+            // ------------------------------------------------
+            // Step 2: Ink Simulation (Feedback)
+            // ------------------------------------------------
+            // rtA (古い絵) を読み込んで、新しい動き(rtMotion)を足して、rtB (新しい絵) に描く
+            quad.material = inkMaterial;
+            inkMaterial.uniforms.tMotion.value = rtMotion.texture;
+            inkMaterial.uniforms.tFeedback.value = rtA.texture;
+            inkMaterial.uniforms.uTime.value = time;
+
+            renderer.setRenderTarget(rtB);
+            renderer.render(scene, camera);
+
+            // Swap buffers (Ping-Pong)
+            // rtBが最新になったので、次のフレームではrtAとして扱うために交換
+            let temp = rtA;
+            rtA = rtB;
+            rtB = temp;
+
+            // ------------------------------------------------
+            // Step 3: Render to Screen
+            // ------------------------------------------------
+            quad.material = compositeMaterial;
+            compositeMaterial.uniforms.tInk.value = rtA.texture; // 最新のインク状態
+            
+            renderer.setRenderTarget(null); // デフォルト（画面）に戻す
+            renderer.render(scene, camera);
+
+            // ------------------------------------------------
+            // Step 4: Save current video frame for next loop
+            // ------------------------------------------------
+            // 次のフレームで「過去の映像」として使うために現在のビデオ画像を保存
+            quad.material = copyMaterial;
+            copyMaterial.map = videoTexture;
+            renderer.setRenderTarget(rtVideoPrev);
+            renderer.render(scene, camera);
+        }
+
+        // Resize
+        window.addEventListener('resize', () => {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            renderer.setSize(w, h);
+            rtA.setSize(w, h);
+            rtB.setSize(w, h);
+            rtMotion.setSize(w, h);
+        });
+
+        animate();
+    </script>
+</body>
+</html>

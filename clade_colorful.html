@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Motion Brush Warehouse - WebGL</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f5f5f0; }
+        canvas { display: block; }
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #888;
+            font-family: sans-serif;
+            letter-spacing: 0.1em;
+            pointer-events: none;
+        }
+        #info {
+            position: absolute;
+            bottom: 20px; left: 20px;
+            color: #333;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 0.8rem;
+            opacity: 0.6;
+            pointer-events: none;
+        }
+        #debug {
+            position: absolute;
+            top: 20px; right: 20px;
+            width: 200px;
+            height: 150px;
+            border: 2px solid #333;
+            background: white;
+        }
+        #controls {
+            position: absolute;
+            top: 20px; left: 20px;
+            color: #333;
+            font-family: sans-serif;
+            font-size: 0.9rem;
+            background: rgba(255,255,255,0.8);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">Requesting Camera Access...</div>
+    <div id="info">Move your body to paint.</div>
+    <canvas id="debug"></canvas>
+    <div id="controls">
+        <button id="toggleDebug">Toggle Camera View</button>
+        <div id="colorInfo">R: 0, G: 0, B: 0</div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script id="motionVertex" type="x-shader/x-vertex">
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    </script>
+    
+    <script id="motionFragment" type="x-shader/x-fragment">
+        uniform sampler2D tCurrent;
+        uniform sampler2D tPrevious;
+        uniform float uSensitivity;
+        varying vec2 vUv;
+
+        void main() {
+            vec4 curr = texture2D(tCurrent, vUv);
+            vec4 prev = texture2D(tPrevious, vUv);
+            
+            float diff = distance(curr.rgb, prev.rgb);
+            float motion = smoothstep(0.05, 0.2, diff) * uSensitivity;
+            
+            gl_FragColor = vec4(vec3(motion), 1.0);
+        }
+    </script>
+
+    <script id="inkVertex" type="x-shader/x-vertex">
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    </script>
+    
+    <script id="inkFragment" type="x-shader/x-fragment">
+        uniform sampler2D tMotion;
+        uniform sampler2D tFeedback;
+        uniform sampler2D tCamera;
+        uniform float uTime;
+        varying vec2 vUv;
+
+        float random(vec2 st) {
+            return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+        }
+
+        float noise(vec2 st) {
+            vec2 i = floor(st);
+            vec2 f = fract(st);
+            float a = random(i);
+            float b = random(i + vec2(1.0, 0.0));
+            float c = random(i + vec2(0.0, 1.0));
+            float d = random(i + vec2(1.0, 1.0));
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+        }
+
+        void main() {
+            float motion = texture2D(tMotion, vUv).r;
+
+            vec2 offset = vec2(
+                noise(vUv * 10.0 + uTime * 0.5) - 0.5,
+                noise(vUv * 10.0 + uTime * 0.5 + 100.0) - 0.5
+            ) * 0.004;
+
+            vec4 oldColor = texture2D(tFeedback, vUv + offset);
+
+            // カメラから色を取得（複数の方法を試す）
+            vec2 camUv = vUv;
+            
+            // 方法1: 通常のUV
+            vec3 cameraColor1 = texture2D(tCamera, camUv).rgb;
+            
+            // 方法2: UV反転
+            vec3 cameraColor2 = texture2D(tCamera, vec2(1.0 - camUv.x, camUv.y)).rgb;
+            
+            // 方法3: 完全反転
+            vec3 cameraColor3 = texture2D(tCamera, vec2(1.0 - camUv.x, 1.0 - camUv.y)).rgb;
+            
+            // 一番色がある方を使用（グレースケールではない方）
+            vec3 cameraColor = cameraColor1;
+            float colorStrength1 = distance(cameraColor1, vec3(dot(cameraColor1, vec3(0.333))));
+            float colorStrength2 = distance(cameraColor2, vec3(dot(cameraColor2, vec3(0.333))));
+            float colorStrength3 = distance(cameraColor3, vec3(dot(cameraColor3, vec3(0.333))));
+            
+            if (colorStrength2 > colorStrength1) cameraColor = cameraColor2;
+            if (colorStrength3 > max(colorStrength1, colorStrength2)) cameraColor = cameraColor3;
+            
+            // RGBチャンネルが正しく取得できているか確認
+            // もし全て同じ値ならグレースケールなので、人工的に色を付ける
+            float avgChannel = (cameraColor.r + cameraColor.g + cameraColor.b) / 3.0;
+            float channelVariance = 
+                abs(cameraColor.r - avgChannel) + 
+                abs(cameraColor.g - avgChannel) + 
+                abs(cameraColor.b - avgChannel);
+            
+            vec3 finalCameraColor;
+            
+            if (channelVariance < 0.05) {
+                // グレースケールと判定 → 位置と時間で色を生成
+                float hue = fract(camUv.x * 0.3 + camUv.y * 0.5 + uTime * 0.1);
+                vec3 artificialColor = 0.5 + 0.5 * cos(6.28318 * (hue + vec3(0.0, 0.33, 0.67)));
+                // グレースケール値を明度として使用
+                finalCameraColor = artificialColor * (avgChannel * 2.0 + 0.5);
+            } else {
+                // カラーと判定 → 彩度を上げる
+                float luminance = dot(cameraColor, vec3(0.299, 0.587, 0.114));
+                vec3 enhancedColor = mix(vec3(luminance), cameraColor, 2.0);
+                finalCameraColor = clamp(enhancedColor * 1.3, 0.0, 1.0);
+            }
+            
+            vec3 newColor = finalCameraColor;
+            vec3 finalColor = mix(oldColor.rgb * 0.995, newColor, motion * 0.8);
+            
+            gl_FragColor = vec4(finalColor, 1.0);
+        }
+    </script>
+
+    <script id="compositeFragment" type="x-shader/x-fragment">
+        uniform sampler2D tInk;
+        varying vec2 vUv;
+
+        void main() {
+            vec4 ink = texture2D(tInk, vUv);
+            vec3 paper = vec3(0.96, 0.96, 0.94);
+            float inkStrength = length(ink.rgb) / 1.732;
+            vec3 final = mix(paper, ink.rgb, inkStrength * 1.2);
+            float grain = (fract(sin(dot(vUv, vec2(12.9898,78.233)*2.0)) * 43758.5453) - 0.5) * 0.03;
+            gl_FragColor = vec4(final + grain, 1.0);
+        }
+    </script>
+
+    <script>
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        const renderer = new THREE.WebGLRenderer({ antialias: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // デバッグ用Canvas
+        const debugCanvas = document.getElementById('debug');
+        const debugCtx = debugCanvas.getContext('2d');
+        debugCanvas.width = 200;
+        debugCanvas.height = 150;
+        let showDebug = true;
+
+        document.getElementById('toggleDebug').addEventListener('click', () => {
+            showDebug = !showDebug;
+            debugCanvas.style.display = showDebug ? 'block' : 'none';
+        });
+
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.muted = true;
+        video.loop = true;
+        video.setAttribute('playsinline', '');
+
+        let videoTexture;
+        let isCameraReady = false;
+
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            // より高品質な設定を要求
+            const constraints = {
+                video: {
+                    facingMode: "user",
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            };
+            
+            navigator.mediaDevices.getUserMedia(constraints)
+                .then(stream => {
+                    video.srcObject = stream;
+                    video.play();
+                    
+                    // VideoTextureの設定を最適化
+                    videoTexture = new THREE.VideoTexture(video);
+                    videoTexture.minFilter = THREE.LinearFilter;
+                    videoTexture.magFilter = THREE.LinearFilter;
+                    videoTexture.format = THREE.RGBFormat;
+                    videoTexture.generateMipmaps = false;
+                    
+                    document.getElementById('loading').style.display = 'none';
+                    isCameraReady = true;
+                    
+                    // カメラ情報をログ
+                    const track = stream.getVideoTracks()[0];
+                    const settings = track.getSettings();
+                    console.log('Camera settings:', settings);
+                })
+                .catch(err => {
+                    console.error("Camera access denied:", err);
+                    document.getElementById('loading').textContent = "Camera access denied. Please allow camera.";
+                });
+        }
+
+        const rtParams = { 
+            minFilter: THREE.LinearFilter, 
+            magFilter: THREE.LinearFilter, 
+            format: THREE.RGBAFormat,
+            type: THREE.FloatType
+        };
+        let rtA = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, rtParams);
+        let rtB = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, rtParams);
+        const rtMotion = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, rtParams);
+
+        const geometry = new THREE.PlaneGeometry(2, 2);
+
+        const motionMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                tCurrent: { value: null },
+                tPrevious: { value: null },
+                uSensitivity: { value: 5.0 }
+            },
+            vertexShader: document.getElementById('motionVertex').textContent,
+            fragmentShader: document.getElementById('motionFragment').textContent
+        });
+
+        const inkMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                tMotion: { value: null },
+                tFeedback: { value: null },
+                tCamera: { value: null },
+                uTime: { value: 0.0 }
+            },
+            vertexShader: document.getElementById('inkVertex').textContent,
+            fragmentShader: document.getElementById('inkFragment').textContent
+        });
+
+        const compositeMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                tInk: { value: null }
+            },
+            vertexShader: document.getElementById('motionVertex').textContent,
+            fragmentShader: document.getElementById('compositeFragment').textContent
+        });
+
+        const quad = new THREE.Mesh(geometry, motionMaterial);
+        scene.add(quad);
+
+        const rtVideoPrev = new THREE.WebGLRenderTarget(512, 512);
+        const copyMaterial = new THREE.MeshBasicMaterial({ map: null });
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!isCameraReady || !videoTexture) return;
+
+            const time = clock.getElapsedTime();
+
+            // デバッグ表示を更新
+            if (showDebug && video.readyState === video.HAVE_ENOUGH_DATA) {
+                debugCtx.drawImage(video, 0, 0, 200, 150);
+                
+                // 中央のピクセル色を取得
+                const imageData = debugCtx.getImageData(100, 75, 1, 1);
+                const r = imageData.data[0];
+                const g = imageData.data[1];
+                const b = imageData.data[2];
+                document.getElementById('colorInfo').textContent = `R: ${r}, G: ${g}, B: ${b}`;
+            }
+
+            quad.material = motionMaterial;
+            motionMaterial.uniforms.tCurrent.value = videoTexture;
+            motionMaterial.uniforms.tPrevious.value = rtVideoPrev.texture;
+            
+            renderer.setRenderTarget(rtMotion);
+            renderer.render(scene, camera);
+
+            quad.material = inkMaterial;
+            inkMaterial.uniforms.tMotion.value = rtMotion.texture;
+            inkMaterial.uniforms.tFeedback.value = rtA.texture;
+            inkMaterial.uniforms.tCamera.value = videoTexture;
+            inkMaterial.uniforms.uTime.value = time;
+
+            renderer.setRenderTarget(rtB);
+            renderer.render(scene, camera);
+
+            let temp = rtA;
+            rtA = rtB;
+            rtB = temp;
+
+            quad.material = compositeMaterial;
+            compositeMaterial.uniforms.tInk.value = rtA.texture;
+            
+            renderer.setRenderTarget(null);
+            renderer.render(scene, camera);
+
+            quad.material = copyMaterial;
+            copyMaterial.map = videoTexture;
+            renderer.setRenderTarget(rtVideoPrev);
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            renderer.setSize(w, h);
+            rtA.setSize(w, h);
+            rtB.setSize(w, h);
+            rtMotion.setSize(w, h);
+        });
+
+        animate();
+    </script>
+</body>
+</html>

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Watercolor World - WebGL</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f0f0f0; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #555;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-weight: 300;
+            letter-spacing: 0.1em;
+            pointer-events: none;
+            mix-blend-mode: multiply;
+        }
+        h1 { margin: 0; font-size: 1.2rem; border-bottom: 1px solid #aaa; display: inline-block; padding-bottom: 5px;}
+        p { font-size: 0.8rem; margin-top: 5px;}
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h1>WATERCOLOR WORLD</h1>
+        <p>Generative WebGL Art</p>
+    </div>
+    
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script id="vertexShader" type="x-shader/x-vertex">
+        varying vec2 vUv;
+        varying vec3 vNormal;
+        varying vec3 vPosition;
+
+        void main() {
+            vUv = uv;
+            vNormal = normalize(normalMatrix * normal);
+            vPosition = position;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    </script>
+
+    <script id="fragmentShader" type="x-shader/x-fragment">
+        uniform float uTime;
+        uniform vec2 uMouse;
+        varying vec2 vUv;
+        varying vec3 vNormal;
+        varying vec3 vPosition;
+
+        // ---------------------------------------------
+        // Simplex Noise Functions (Standard for organic looks)
+        // ---------------------------------------------
+        vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+        vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+        float snoise(vec3 v) {
+            const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
+            const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+            vec3 i  = floor(v + dot(v, C.yyy) );
+            vec3 x0 = v - i + dot(i, C.xxx) ;
+            vec3 g = step(x0.yzx, x0.xyz);
+            vec3 l = 1.0 - g;
+            vec3 i1 = min( g.xyz, l.zxy );
+            vec3 i2 = max( g.xyz, l.zxy );
+            vec3 x1 = x0 - i1 + C.xxx;
+            vec3 x2 = x0 - i2 + C.yyy;
+            vec3 x3 = x0 - D.yyy;
+            i = mod289(i);
+            vec4 p = permute( permute( permute(
+                        i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+                    + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
+                    + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+            float n_ = 0.142857142857;
+            vec3  ns = n_ * D.wyz - D.xzx;
+            vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+            vec4 x_ = floor(j * ns.z);
+            vec4 y_ = floor(j - 7.0 * x_ );
+            vec4 x = x_ *ns.x + ns.yyyy;
+            vec4 y = y_ *ns.x + ns.yyyy;
+            vec4 h = 1.0 - abs(x) - abs(y);
+            vec4 b0 = vec4( x.xy, y.xy );
+            vec4 b1 = vec4( x.zw, y.zw );
+            vec4 s0 = floor(b0)*2.0 + 1.0;
+            vec4 s1 = floor(b1)*2.0 + 1.0;
+            vec4 sh = -step(h, vec4(0.0));
+            vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+            vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+            vec3 p0 = vec3(a0.xy,h.x);
+            vec3 p1 = vec3(a0.zw,h.y);
+            vec3 p2 = vec3(a1.xy,h.z);
+            vec3 p3 = vec3(a1.zw,h.w);
+            vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+            p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+            vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+            m = m * m;
+            return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
+        }
+
+        // Fractal Brownian Motion for detail
+        float fbm(vec3 p) {
+            float sum = 0.0;
+            float amp = 0.5;
+            for(int i = 0; i < 5; i++) {
+                sum += amp * snoise(p);
+                p *= 2.0;
+                amp *= 0.5;
+            }
+            return sum;
+        }
+
+        void main() {
+            // Coordinate manipulation for rotation
+            vec3 pos = vPosition;
+            float angle = uTime * 0.1;
+            mat2 rot = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
+            pos.xz = rot * pos.xz;
+            
+            // Add mouse interaction influence
+            pos.y += uMouse.y * 0.5;
+            pos.x += uMouse.x * 0.5;
+
+            // Generate noise patterns
+            // Base continent shape
+            float n = fbm(pos * 1.5 + vec3(0.0, uTime * 0.05, 0.0)); 
+            
+            // Water/Paper Texture Noise
+            float paperGrain = snoise(vPosition * 80.0) * 0.05;
+
+            // Define Watercolor Palette
+            vec3 deepBlue = vec3(0.1, 0.3, 0.5);
+            vec3 lightBlue = vec3(0.4, 0.7, 0.8);
+            vec3 sand = vec3(0.9, 0.85, 0.7);
+            vec3 paperWhite = vec3(0.96, 0.96, 0.94); // Creamy paper
+
+            // Mixing Logic (Quantizing colors for watercolor effect)
+            vec3 color = paperWhite;
+            
+            // Create "wet edges" by distorting the mixing threshold
+            float edgeDistort = snoise(pos * 10.0 + uTime) * 0.1;
+            
+            if (n + edgeDistort > 0.15) {
+                color = mix(sand, paperWhite, 0.3); // Land
+            }
+            if (n + edgeDistort < 0.15) {
+                color = mix(lightBlue, paperWhite, 0.2); // Shallow water
+            }
+            if (n + edgeDistort < -0.1) {
+                color = mix(deepBlue, lightBlue, 0.5 + n); // Deep water
+            }
+
+            // Lighting (Soft ambient)
+            vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));
+            float diff = max(dot(vNormal, lightDir), 0.0);
+            
+            // Toon-ish lighting but soft
+            float lightIntensity = smoothstep(0.2, 0.8, diff);
+            color *= (0.8 + 0.2 * lightIntensity);
+
+            // Apply Paper Grain
+            color -= paperGrain;
+
+            // Vignette for artistic feel
+            float viewAngle = dot(vNormal, vec3(0,0,1));
+            color = mix(color, paperWhite, 1.0 - smoothstep(0.0, 0.5, viewAngle));
+
+            gl_FragColor = vec4(color, 1.0);
+        }
+    </script>
+
+    <script>
+        // Setup Scene
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xf0f0f0); // Paper color
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.z = 4.5;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio for performance
+        document.body.appendChild(renderer.domElement);
+
+        // Create Sphere
+        const geometry = new THREE.SphereGeometry(1.6, 128, 128);
+
+        const uniforms = {
+            uTime: { value: 0.0 },
+            uMouse: { value: new THREE.Vector2(0, 0) }
+        };
+
+        const material = new THREE.ShaderMaterial({
+            uniforms: uniforms,
+            vertexShader: document.getElementById('vertexShader').textContent,
+            fragmentShader: document.getElementById('fragmentShader').textContent,
+            transparent: true
+        });
+
+        const sphere = new THREE.Mesh(geometry, material);
+        scene.add(sphere);
+
+        // Background Particles (Subtle ink splatters)
+        const particlesGeom = new THREE.BufferGeometry();
+        const particlesCount = 50;
+        const posArray = new Float32Array(particlesCount * 3);
+        
+        for(let i = 0; i < particlesCount * 3; i++) {
+            posArray[i] = (Math.random() - 0.5) * 10;
+        }
+        particlesGeom.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+        const particlesMat = new THREE.PointsMaterial({
+            size: 0.05,
+            color: 0x8899aa,
+            transparent: true,
+            opacity: 0.4
+        });
+        const particles = new THREE.Points(particlesGeom, particlesMat);
+        scene.add(particles);
+
+
+        // Interaction
+        const mouse = new THREE.Vector2();
+        window.addEventListener('mousemove', (event) => {
+            // Normalize mouse position -1 to 1
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        });
+
+        // Resize handler
+        window.addEventListener('resize', () => {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+        });
+
+        // Animation Loop
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const elapsedTime = clock.getElapsedTime();
+            uniforms.uTime.value = elapsedTime;
+            
+            // Smooth mouse follow
+            uniforms.uMouse.value.lerp(mouse, 0.05);
+
+            // Rotate whole sphere gently
+            sphere.rotation.y = elapsedTime * 0.05;
+            sphere.rotation.z = Math.sin(elapsedTime * 0.2) * 0.1;
+
+            // Move background particles slowly
+            particles.rotation.y = elapsedTime * 0.02;
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
