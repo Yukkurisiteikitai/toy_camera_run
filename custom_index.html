@@ -12,6 +12,14 @@
             font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", sans-serif;
         }
         canvas { display: block; }
+
+        body.immersive #overlay,
+        body.immersive #ui-layer,
+        body.immersive #menu-button,
+        body.immersive #controls {
+            opacity: 0;
+            pointer-events: none;
+        }
         
         #overlay {
             position: absolute;
@@ -56,26 +64,125 @@
             opacity: 0.8;
         }
 
-        #controls {
+        #menu-button {
             position: absolute;
             top: 18px;
             right: 18px;
+            z-index: 5;
+            width: 46px;
+            height: 46px;
+            display: grid;
+            place-items: center;
+            border: 1px solid rgba(28, 28, 24, 0.16);
+            border-radius: 50%;
+            background: rgba(250, 250, 246, 0.74);
+            color: #222;
+            cursor: pointer;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 16px 36px rgba(34, 32, 24, 0.14);
+            transition: transform 0.25s, background 0.25s, opacity 0.25s;
+        }
+
+        #menu-button:hover {
+            transform: translateY(-1px);
+            background: rgba(255, 255, 252, 0.92);
+        }
+
+        .menu-lines,
+        .menu-lines::before,
+        .menu-lines::after {
+            width: 18px;
+            height: 2px;
+            display: block;
+            border-radius: 999px;
+            background: currentColor;
+            transition: transform 0.25s, opacity 0.25s;
+        }
+
+        .menu-lines {
+            position: relative;
+        }
+
+        .menu-lines::before,
+        .menu-lines::after {
+            content: "";
+            position: absolute;
+            left: 0;
+        }
+
+        .menu-lines::before { transform: translateY(-6px); }
+        .menu-lines::after { transform: translateY(6px); }
+
+        body.menu-open .menu-lines {
+            background: transparent;
+        }
+
+        body.menu-open .menu-lines::before {
+            transform: rotate(45deg);
+        }
+
+        body.menu-open .menu-lines::after {
+            transform: rotate(-45deg);
+        }
+
+        #controls {
+            position: absolute;
+            top: 78px;
+            right: 18px;
             z-index: 3;
-            width: 260px;
-            color: #333;
-            background: rgba(250, 250, 246, 0.88);
-            border: 1px solid rgba(0, 0, 0, 0.12);
-            border-radius: 8px;
-            padding: 14px;
+            width: min(320px, calc(100vw - 36px));
+            color: #272722;
+            background:
+                linear-gradient(145deg, rgba(255, 255, 252, 0.94), rgba(238, 238, 229, 0.82));
+            border: 1px solid rgba(32, 31, 24, 0.12);
+            border-radius: 18px;
+            padding: 18px;
             box-sizing: border-box;
             font-size: 0.78rem;
-            backdrop-filter: blur(12px);
+            backdrop-filter: blur(18px);
+            box-shadow: 0 22px 70px rgba(34, 32, 24, 0.18);
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-8px) scale(0.98);
+            transform-origin: top right;
+            transition: opacity 0.25s, transform 0.25s;
+        }
+
+        body.menu-open #controls {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(0) scale(1);
+        }
+
+        .controls-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(40, 38, 31, 0.12);
+        }
+
+        .controls-title {
+            margin: 0;
+            font-size: 0.82rem;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+        }
+
+        .controls-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #ff5a7a;
+            box-shadow: 0 0 0 5px rgba(255, 90, 122, 0.16);
         }
 
         .control-row {
             display: grid;
-            gap: 6px;
-            margin-bottom: 12px;
+            gap: 8px;
+            margin-bottom: 14px;
         }
 
         .control-row:last-child {
@@ -84,9 +191,9 @@
 
         label {
             font-weight: 600;
-            letter-spacing: 0.08em;
+            letter-spacing: 0.12em;
             text-transform: uppercase;
-            color: #555;
+            color: #6b665d;
         }
 
         input, button {
@@ -96,19 +203,21 @@
         input[type="file"] {
             width: 100%;
             font-size: 0.72rem;
+            color: #565249;
         }
 
         input[type="color"] {
             width: 100%;
-            height: 34px;
-            padding: 2px;
-            border: 1px solid #bbb;
-            border-radius: 6px;
-            background: #fff;
+            height: 38px;
+            padding: 3px;
+            border: 1px solid rgba(40, 38, 31, 0.16);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.72);
         }
 
         input[type="range"] {
             width: 100%;
+            accent-color: #ff5a7a;
         }
 
         .button-row {
@@ -118,16 +227,45 @@
         }
 
         button {
-            min-height: 32px;
-            border: 1px solid rgba(0, 0, 0, 0.18);
-            border-radius: 6px;
-            background: #fff;
-            color: #333;
+            min-height: 36px;
+            border: 1px solid rgba(39, 38, 31, 0.14);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.68);
+            color: #302f2a;
             cursor: pointer;
+            transition: transform 0.18s, background 0.18s, border-color 0.18s;
         }
 
         button:hover {
-            background: #f1f1ed;
+            background: rgba(255, 255, 255, 0.96);
+            border-color: rgba(39, 38, 31, 0.24);
+            transform: translateY(-1px);
+        }
+
+        #fullscreen-view {
+            width: 100%;
+            margin-top: 4px;
+            color: #f8f5ee;
+            background: #25231f;
+            border-color: #25231f;
+        }
+
+        @media (max-width: 560px) {
+            #ui-layer {
+                left: 18px;
+                bottom: 18px;
+            }
+
+            #controls {
+                top: 72px;
+                right: 12px;
+                width: calc(100vw - 24px);
+            }
+
+            #menu-button {
+                top: 14px;
+                right: 14px;
+            }
         }
     </style>
 </head>
@@ -142,7 +280,15 @@
         <p>Movement becomes ink. / 動きが色として堆積する</p>
     </div>
 
+    <button id="menu-button" type="button" aria-label="設定を開く" aria-expanded="false">
+        <span class="menu-lines" aria-hidden="true"></span>
+    </button>
+
     <div id="controls">
+        <div class="controls-header">
+            <div class="controls-title">Studio</div>
+            <div class="controls-dot" aria-hidden="true"></div>
+        </div>
         <div class="control-row">
             <label for="video-file">Video Source</label>
             <input id="video-file" type="file" accept="video/*">
@@ -158,6 +304,9 @@
         <div class="button-row">
             <button id="use-camera" type="button">Camera</button>
             <button id="clear-ink" type="button">Clear</button>
+        </div>
+        <div class="control-row">
+            <button id="fullscreen-view" type="button">全体表示</button>
         </div>
     </div>
 
@@ -364,11 +513,14 @@
         let loadedVideoUrl = null;
 
         const loadingEl = document.getElementById('loading');
+        const menuButton = document.getElementById('menu-button');
+        const controlsPanel = document.getElementById('controls');
         const videoFileInput = document.getElementById('video-file');
         const inkColorInput = document.getElementById('ink-color');
         const colorMixInput = document.getElementById('color-mix');
         const useCameraButton = document.getElementById('use-camera');
         const clearInkButton = document.getElementById('clear-ink');
+        const fullscreenViewButton = document.getElementById('fullscreen-view');
 
         // --- レンダーターゲット（バッファ）の設定 ---
         // 浮動小数点テクスチャを使うことで色の精度を落とさず滑らかにする
@@ -473,6 +625,29 @@
             const color = new THREE.Color(inkColorInput.value);
             inkMaterial.uniforms.uInkTint.value.copy(color);
             inkMaterial.uniforms.uTintMix.value = Number(colorMixInput.value) / 100;
+            document.querySelector('.controls-dot').style.background = inkColorInput.value;
+            document.querySelector('.controls-dot').style.boxShadow = `0 0 0 5px ${inkColorInput.value}29`;
+        }
+
+        function setMenuOpen(isOpen) {
+            document.body.classList.toggle('menu-open', isOpen);
+            menuButton.setAttribute('aria-expanded', String(isOpen));
+            menuButton.setAttribute('aria-label', isOpen ? '設定を閉じる' : '設定を開く');
+        }
+
+        function enterImmersiveMode() {
+            setMenuOpen(false);
+            document.body.classList.add('immersive');
+            if (document.fullscreenEnabled && !document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            }
+        }
+
+        function exitImmersiveMode() {
+            document.body.classList.remove('immersive');
+            if (document.fullscreenElement) {
+                document.exitFullscreen().catch(() => {});
+            }
         }
 
         function startCamera() {
@@ -548,6 +723,10 @@
 
         inkColorInput.addEventListener('input', updateInkTint);
         colorMixInput.addEventListener('input', updateInkTint);
+        menuButton.addEventListener('click', () => {
+            if (document.body.classList.contains('immersive')) return;
+            setMenuOpen(!document.body.classList.contains('menu-open'));
+        });
         videoFileInput.addEventListener('change', event => {
             loadVideoFile(event.target.files[0]);
         });
@@ -556,6 +735,20 @@
             startCamera();
         });
         clearInkButton.addEventListener('click', clearInkBuffers);
+        fullscreenViewButton.addEventListener('click', enterImmersiveMode);
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                exitImmersiveMode();
+            }
+        });
+        document.addEventListener('fullscreenchange', () => {
+            if (!document.fullscreenElement) {
+                document.body.classList.remove('immersive');
+            }
+        });
+        controlsPanel.addEventListener('click', event => {
+            event.stopPropagation();
+        });
         updateInkTint();
         startCamera();
 
