@@ -1,0 +1,322 @@
+/* UIデザインの整備 */
+body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #f2f2f0;
+    font-family:
+        "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", sans-serif;
+}
+canvas {
+    display: block;
+}
+
+body.immersive #overlay,
+body.immersive #ui-layer,
+body.immersive #menu-button,
+body.immersive #github-link,
+body.immersive #controls {
+    opacity: 0;
+    pointer-events: none;
+}
+
+#overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    transition: opacity 1s;
+}
+
+#loading {
+    font-size: 1.2rem;
+    color: #888;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+}
+
+#ui-layer {
+    position: absolute;
+    bottom: 30px;
+    left: 30px;
+    color: #444;
+    mix-blend-mode: multiply; /* 紙に馴染ませる */
+}
+
+h1 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    border-bottom: 1px solid #999;
+    display: inline-block;
+    padding-bottom: 5px;
+}
+
+p {
+    margin-top: 8px;
+    font-size: 0.75rem;
+    font-weight: 300;
+    opacity: 0.8;
+}
+
+#menu-button {
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    z-index: 5;
+    width: 46px;
+    height: 46px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(28, 28, 24, 0.16);
+    border-radius: 50%;
+    background: rgba(250, 250, 246, 0.74);
+    color: #222;
+    cursor: pointer;
+    backdrop-filter: blur(16px);
+    box-shadow: 0 16px 36px rgba(34, 32, 24, 0.14);
+    transition:
+        transform 0.25s,
+        background 0.25s,
+        opacity 0.25s;
+}
+
+#github-link {
+    position: absolute;
+    top: 18px;
+    right: 72px;
+    z-index: 5;
+    width: 46px;
+    height: 46px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(28, 28, 24, 0.16);
+    border-radius: 50%;
+    background: rgba(250, 250, 246, 0.74);
+    color: #222;
+    cursor: pointer;
+    backdrop-filter: blur(16px);
+    box-shadow: 0 16px 36px rgba(34, 32, 24, 0.14);
+    transition:
+        transform 0.25s,
+        background 0.25s,
+        opacity 0.25s;
+}
+
+#menu-button:hover,
+#github-link:hover {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 252, 0.92);
+}
+
+#github-link svg {
+    width: 19px;
+    height: 19px;
+    display: block;
+}
+
+.menu-lines,
+.menu-lines::before,
+.menu-lines::after {
+    width: 18px;
+    height: 2px;
+    display: block;
+    border-radius: 999px;
+    background: currentColor;
+    transition:
+        transform 0.25s,
+        opacity 0.25s;
+}
+
+.menu-lines {
+    position: relative;
+}
+
+.menu-lines::before,
+.menu-lines::after {
+    content: "";
+    position: absolute;
+    left: 0;
+}
+
+.menu-lines::before {
+    transform: translateY(-6px);
+}
+.menu-lines::after {
+    transform: translateY(6px);
+}
+
+body.menu-open .menu-lines {
+    background: transparent;
+}
+
+body.menu-open .menu-lines::before {
+    transform: rotate(45deg);
+}
+
+body.menu-open .menu-lines::after {
+    transform: rotate(-45deg);
+}
+
+#controls {
+    position: absolute;
+    top: 78px;
+    right: 18px;
+    z-index: 3;
+    width: min(320px, calc(100vw - 36px));
+    color: #272722;
+    background: linear-gradient(
+        145deg,
+        rgba(255, 255, 252, 0.94),
+        rgba(238, 238, 229, 0.82)
+    );
+    border: 1px solid rgba(32, 31, 24, 0.12);
+    border-radius: 18px;
+    padding: 18px;
+    box-sizing: border-box;
+    font-size: 0.78rem;
+    backdrop-filter: blur(18px);
+    box-shadow: 0 22px 70px rgba(34, 32, 24, 0.18);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-8px) scale(0.98);
+    transform-origin: top right;
+    transition:
+        opacity 0.25s,
+        transform 0.25s;
+}
+
+body.menu-open #controls {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+}
+
+.controls-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(40, 38, 31, 0.12);
+}
+
+.controls-title {
+    margin: 0;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+.controls-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #ff5a7a;
+    box-shadow: 0 0 0 5px rgba(255, 90, 122, 0.16);
+}
+
+.control-row {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.control-row:last-child {
+    margin-bottom: 0;
+}
+
+label {
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #6b665d;
+}
+
+input,
+button {
+    font: inherit;
+}
+
+input[type="file"] {
+    width: 100%;
+    font-size: 0.72rem;
+    color: #565249;
+}
+
+input[type="color"] {
+    width: 100%;
+    height: 38px;
+    padding: 3px;
+    border: 1px solid rgba(40, 38, 31, 0.16);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.72);
+}
+
+input[type="range"] {
+    width: 100%;
+    accent-color: #ff5a7a;
+}
+
+.button-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+button {
+    min-height: 36px;
+    border: 1px solid rgba(39, 38, 31, 0.14);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.68);
+    color: #302f2a;
+    cursor: pointer;
+    transition:
+        transform 0.18s,
+        background 0.18s,
+        border-color 0.18s;
+}
+
+button:hover {
+    background: rgba(255, 255, 255, 0.96);
+    border-color: rgba(39, 38, 31, 0.24);
+    transform: translateY(-1px);
+}
+
+#fullscreen-view {
+    width: 100%;
+    margin-top: 4px;
+    color: #f8f5ee;
+    background: #25231f;
+    border-color: #25231f;
+}
+
+@media (max-width: 560px) {
+    #ui-layer {
+        left: 18px;
+        bottom: 18px;
+    }
+
+    #controls {
+        top: 72px;
+        right: 12px;
+        width: calc(100vw - 24px);
+    }
+
+    #menu-button {
+        top: 14px;
+        right: 14px;
+    }
+
+    #github-link {
+        top: 14px;
+        right: 68px;
+    }
+}
